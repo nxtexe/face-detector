@@ -1,6 +1,6 @@
 import React from 'react';
 import './App.css';
-import {FaceDetector} from './facial-recognition/index';
+import {FaceDetector, IResult} from './facial-recognition/index';
 
 class App extends React.Component {
   private face_detector : FaceDetector | undefined;
@@ -11,9 +11,34 @@ class App extends React.Component {
       palette: {
         FACE: '#5CB4F3',
         IRIS: '#E8760C'
-      }
+      },
+      FACE_IN_VIEW_THRESHOLD: 0.9,
+      RENDER_FX: true
     });
+
     this.face_detector.detect();
+    this.face_detector.on('found', (result : IResult) => {
+      const width : number = result.position.bottomRight.x - result.position.bottomLeft.x;
+      const height : number = result.position.bottomLeft.y - result.position.topLeft.y;
+
+      const output_canvas : HTMLCanvasElement = document.createElement('canvas') as HTMLCanvasElement;
+      const input_canvas : HTMLCanvasElement = this.face_detector?.get_clean_plate() as HTMLCanvasElement;
+      const input_context : CanvasRenderingContext2D = input_canvas.getContext('2d') as CanvasRenderingContext2D;
+      const output_context : CanvasRenderingContext2D = output_canvas.getContext('2d') as CanvasRenderingContext2D;
+
+      output_canvas.height = height;
+      output_canvas.width = width;
+
+      const image_data : ImageData = input_context.getImageData(result.position.topLeft.x, result.position.topLeft.y, width, height);
+      output_context.putImageData(image_data, 0, 0);
+
+      const img : HTMLImageElement = document.getElementById('image') as HTMLImageElement;
+      img.setAttribute('src', output_canvas.toDataURL());
+      //this.face_detector?.stop();
+    });
+    this.face_detector.on('error', () => {
+      this.face_detector?.stop();
+    });
   }
   render() {
     return (
@@ -21,6 +46,9 @@ class App extends React.Component {
         <header className="App-header">
           <div id="canvas-container">
             <canvas id="canvas" width="480" height="852" />
+          </div>
+          <div>
+            <img id="image" />
           </div>
         </header>
       </div>

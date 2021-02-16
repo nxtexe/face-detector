@@ -5,6 +5,7 @@ import * as tf from '@tensorflow/tfjs-core';
 import '@tensorflow/tfjs-backend-webgl';
 import '@tensorflow/tfjs-backend-cpu';
 import {TRIANGULATION} from './common/triangulation';
+import { Coord2D } from '@tensorflow-models/face-landmarks-detection/dist/mediapipe-facemesh/util';
 
 export interface ICallbacks {
     found?: Function;
@@ -24,17 +25,68 @@ export interface IConfig {
     NUM_KEYPOINTS      : number;
     NUM_IRIS_KEYPOINTS : number;
     palette            : IPalette;
+    FACE_IN_VIEW_THRESHOLD : number;
+    RENDER_FX : boolean;
 }
 export interface Config {
     NUM_KEYPOINTS?      : number;
     NUM_IRIS_KEYPOINTS? : number;
     palette?            : IPalette;
+    FACE_IN_VIEW_THRESHOLD? : number;
+    RENDER_FX? : boolean;
 }
 
-interface IMetaData {
+export interface IMetaData {
     cover_ratio : number;
     top_left    : {x: number, y: number};
+    image_height : number;
+    image_width  : number;
 }
+
+export type Vec2 = {
+    x: number;
+    y: number;
+}
+
+export interface IPosition {
+    bottomLeft: Vec2;
+    bottomRight: Vec2;
+    topLeft: Vec2;
+    topRight: Vec2;
+}
+
+export interface IResult {
+    error?: string;
+    position: IPosition;
+    profile_info: {mspf: string, fps: string};
+}
+export class Result implements IResult {
+    public error: string;
+    public position: IPosition;
+    public profile_info: {mspf: string, fps: string};
+    constructor(result? : {error?: string, position?: IPosition, profile_info?: {mspf: string, fps: string}}) {
+        if (result) {
+            this.error = result.error ? result.error : '';
+            this.position = result.position ? result.position : {
+                bottomRight: {x: 0, y: 0},
+                bottomLeft: {x: 0, y: 0},
+                topRight: {x: 0, y: 0},
+                topLeft: {x: 0, y: 0},
+            };
+            this.profile_info = result.profile_info ? result.profile_info : {mspf: '0', fps: '0'};
+        } else {
+            this.error = '';
+            this.position = {
+                bottomRight: {x: 0, y: 0},
+                bottomLeft: {x: 0, y: 0},
+                topRight: {x: 0, y: 0},
+                topLeft: {x: 0, y: 0},
+            };
+            this.profile_info = {mspf: '0', fps: '0'};
+        }
+    }
+}
+
 export class FaceDetector {
     private _output_render_context : CanvasRenderingContext2D;
     private _video : HTMLVideoElement;
@@ -51,9 +103,12 @@ export class FaceDetector {
         palette: {
             FACE: '#32EEDB',
             IRIS: '#FF2C35'
-        }
+        },
+        FACE_IN_VIEW_THRESHOLD: 0.8,
+        RENDER_FX: true
     };
     private _image_metadata : IMetaData;
+    private render_fx : boolean = false;
     constructor(context : CanvasRenderingContext2D, config? : Config) {
         this._output_render_context = context;
         this._video = document.createElement('video') as HTMLVideoElement;
@@ -71,7 +126,9 @@ export class FaceDetector {
             top_left: {
                 x: 0,
                 y: 0
-            }
+            },
+            image_height: 0,
+            image_width: 0
         }
         //clear canvas to black
         this._output_render_context.fillStyle = "black";
@@ -80,7 +137,7 @@ export class FaceDetector {
 
     private distance(a : number[], b : number[]) {
         return Math.sqrt(Math.pow(a[0] - b[0], 2) + Math.pow(a[1] - b[1], 2));
-      }
+    }
       
     private drawPath(points : number[][], closePath : boolean) {
         const region : Path2D = new Path2D();
@@ -92,7 +149,8 @@ export class FaceDetector {
             const point = points[i];
             region.lineTo(
                 (point[0] * this._image_metadata.cover_ratio) + this._image_metadata.top_left.x,
-                (point[1]- this._image_metadata.top_left.y) * this._image_metadata.cover_ratio);
+                (point[1] - this._image_metadata.top_left.y) * this._image_metadata.cover_ratio
+            );
         }
         
         if (closePath) {
@@ -105,15 +163,51 @@ export class FaceDetector {
         // Pass in a video stream (or an image, canvas, or 3D tensor) to obtain an
         // array of detected faces from the MediaPipe graph. If passing in a video
         // stream, a single prediction per frame will be returned.
+        const start : number = Date.now();
         const predictions = await this.model?.estimateFaces({
             input: this._video,
             returnTensors: false,
             flipHorizontal: false,
             predictIrises: true
         });
+        const end : number = Date.now();
 
         //render face triangle mesh
         if (predictions && predictions.length > 0) {
+            if (predictions[0].faceInViewConfidence > this.config.FACE_IN_VIEW_THRESHOLD && this._callbacks.found) {
+                this.render_fx = true;
+                const topLeft : Vec2 = {
+                    x: (predictions[0].boundingBox.topLeft as Coord2D)[0],
+                    y: (predictions[0].boundingBox.topLeft as Coord2D)[1]
+                };
+
+                const bottomRight : Vec2 = {
+                    x: (predictions[0].boundingBox.bottomRight as Coord2D)[0],
+                    y: (predictions[0].boundingBox.bottomRight as Coord2D)[1]
+                };
+
+                const result : IResult = {
+                    position: {
+                        topLeft: topLeft,
+                        bottomRight: bottomRight,
+                        topRight: {
+                            x: bottomRight.x,
+                            y: topLeft.y
+                        },
+                        bottomLeft: {
+                            x: topLeft.x,
+                            y: bottomRight.y
+                        }
+                    },
+                    profile_info: {
+                        mspf: (end-start).toFixed(2),
+                        fps: (1/((end-start)/1000)).toFixed(2)
+                    }
+                }
+                this._callbacks.found(result);
+            } else {
+                this.render_fx = false;
+            }
             this.keypoints = predictions[0].scaledMesh as unknown as number[][];
         }
 
@@ -147,8 +241,10 @@ export class FaceDetector {
             top_left: {
                 x: x,
                 y: y
-            }
-        }
+            },
+            image_height: new_image_height,
+            image_width: new_image_width
+        };
 
         //draw to canvas
         this._output_render_context.drawImage(this._video, x, y, new_image_width, new_image_height);
@@ -156,7 +252,8 @@ export class FaceDetector {
         this._output_render_context.strokeStyle = this.config.palette.FACE;
         this._output_render_context.lineWidth = 0.5;
         
-        if (this.keypoints.length > 1) {
+        //render effects (triangle mesh and iris mesh)
+        if (this.keypoints.length > 1 && this.render_fx && this.config.RENDER_FX) {
             //face
             for (let i = 0; i < TRIANGULATION.length / 3; i++) {
                 const points = [
@@ -174,10 +271,12 @@ export class FaceDetector {
                 const leftCenter = this.keypoints[this.config.NUM_KEYPOINTS];
                 const leftDiameterY = this.distance(
                     this.keypoints[this.config.NUM_KEYPOINTS + 4],
-                    this.keypoints[this.config.NUM_KEYPOINTS + 2]);
+                    this.keypoints[this.config.NUM_KEYPOINTS + 2]
+                );
                 const leftDiameterX = this.distance(
                     this.keypoints[this.config.NUM_KEYPOINTS + 3],
-                    this.keypoints[this.config.NUM_KEYPOINTS + 1]);
+                    this.keypoints[this.config.NUM_KEYPOINTS + 1]
+                );
         
                 this._output_render_context.beginPath();
                 this._output_render_context.ellipse(
@@ -339,6 +438,37 @@ export class FaceDetector {
             } else {
                 reject(new Error("Stream was not initialised."));
             }
-        })
+        });
+    }
+
+    public on(event : events, callback : Function) : void {
+        switch(event) {
+            case "found":
+                this._callbacks.found = callback;
+                break;
+            
+            case "error":
+                this._callbacks.error = callback;
+                break;
+        }
+    }
+
+    public get_clean_plate() : HTMLCanvasElement {
+        const clean_plate : HTMLCanvasElement = document.createElement('canvas') as HTMLCanvasElement;
+
+        const clean_plate_context : CanvasRenderingContext2D = clean_plate.getContext('2d') as CanvasRenderingContext2D;
+
+        clean_plate.height = this._image_metadata.image_height;
+        clean_plate.width = this._image_metadata.image_width;
+        //draw to canvas
+        clean_plate_context.drawImage(
+            this._video,
+            this._image_metadata.top_left.x,
+            this._image_metadata.top_left.y,
+            this._image_metadata.image_width,
+            this._image_metadata.image_height
+        );
+
+        return clean_plate;
     }
 }
