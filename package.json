@@ -1,5 +1,5 @@
 {
-  "name": "opencv-facial-recognition",
+  "name": "tensorflow-face-detection",
   "version": "0.1.0",
   "private": true,
   "dependencies": {

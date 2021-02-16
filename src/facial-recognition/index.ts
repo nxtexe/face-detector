@@ -31,6 +31,10 @@ export interface Config {
     palette?            : IPalette;
 }
 
+interface IMetaData {
+    cover_ratio : number;
+    top_left    : {x: number, y: number};
+}
 export class FaceDetector {
     private _output_render_context : CanvasRenderingContext2D;
     private _video : HTMLVideoElement;
@@ -39,6 +43,8 @@ export class FaceDetector {
     private _anim_id : number = 0;
     protected _callbacks : ICallbacks = {};
     private model : MediaPipeFaceMesh | undefined;
+    private _interval_id : number = 0;
+    private keypoints : number[][];
     private config : IConfig = {
         NUM_KEYPOINTS: 468,
         NUM_IRIS_KEYPOINTS: 5,
@@ -47,6 +53,7 @@ export class FaceDetector {
             IRIS: '#FF2C35'
         }
     };
+    private _image_metadata : IMetaData;
     constructor(context : CanvasRenderingContext2D, config? : Config) {
         this._output_render_context = context;
         this._video = document.createElement('video') as HTMLVideoElement;
@@ -54,6 +61,16 @@ export class FaceDetector {
             this.config = {
                 ...this.config,
                 ...config
+            }
+        }
+
+        this.keypoints = [[0]];
+
+        this._image_metadata = {
+            cover_ratio: 0,
+            top_left: {
+                x: 0,
+                y: 0
             }
         }
         //clear canvas to black
@@ -65,12 +82,17 @@ export class FaceDetector {
         return Math.sqrt(Math.pow(a[0] - b[0], 2) + Math.pow(a[1] - b[1], 2));
       }
       
-    private drawPath(topLeft : {x: number, y: number}, coverRatio : number, points : number[][], closePath : boolean) {
+    private drawPath(points : number[][], closePath : boolean) {
         const region : Path2D = new Path2D();
-        region.moveTo((points[0][0] * coverRatio) + topLeft.x, (points[0][1] - topLeft.y) * coverRatio);
+        region.moveTo(
+            (points[0][0] * this._image_metadata.cover_ratio) + this._image_metadata.top_left.x,
+            (points[0][1] - this._image_metadata.top_left.y) * this._image_metadata.cover_ratio
+        );
         for (let i = 1; i < points.length; i++) {
             const point = points[i];
-            region.lineTo((point[0] * coverRatio) + topLeft.x, (point[1]- topLeft.y) * coverRatio);
+            region.lineTo(
+                (point[0] * this._image_metadata.cover_ratio) + this._image_metadata.top_left.x,
+                (point[1]- this._image_metadata.top_left.y) * this._image_metadata.cover_ratio);
         }
         
         if (closePath) {
@@ -79,25 +101,7 @@ export class FaceDetector {
         this._output_render_context.stroke(region);
     }
 
-    private async _render() {
-        //scale to cover
-        var originalRatios = {
-            width: this._output_render_context.canvas.width / this._video.videoWidth,
-            height: this._output_render_context.canvas.height / this._video.videoHeight
-        };
-        
-        // formula for cover:
-        var coverRatio = Math.max(originalRatios.width, originalRatios.height); 
-        
-        // result:
-        var newImageWidth = this._video.videoWidth * coverRatio;
-        var newImageHeight = this._video.videoHeight * coverRatio;
-
-        // // get the top left position of the image
-        var x = (this._output_render_context.canvas.width / 2) - (this._video.videoWidth / 2) * coverRatio;
-        var y = (this._output_render_context.canvas.height / 2) - (this._video.videoHeight / 2) * coverRatio;
-
-
+    private async _read() {
         // Pass in a video stream (or an image, canvas, or 3D tensor) to obtain an
         // array of detected faces from the MediaPipe graph. If passing in a video
         // stream, a single prediction per frame will be returned.
@@ -108,63 +112,101 @@ export class FaceDetector {
             predictIrises: true
         });
 
-        //draw to canvas
-        this._output_render_context.drawImage(this._video, x, y, newImageWidth, newImageHeight);
-
         //render face triangle mesh
         if (predictions && predictions.length > 0) {
-            predictions.forEach(prediction => {
-                const keypoints : number[][] = prediction.scaledMesh as unknown as number[][];
-        
-                this._output_render_context.strokeStyle = this.config.palette.FACE;
-                this._output_render_context.lineWidth = 0.5;
-                
-                //face
-                for (let i = 0; i < TRIANGULATION.length / 3; i++) {
-                    const points = [
-                    TRIANGULATION[i * 3], TRIANGULATION[i * 3 + 1],
-                    TRIANGULATION[i * 3 + 2]
-                    ].map(index => keypoints[index]);
-        
-                    this.drawPath({x: x, y: y}, coverRatio, points, true);
-                }
-
-                //iris
-                if(keypoints.length > this.config.NUM_KEYPOINTS) {
-                    this._output_render_context.strokeStyle = this.config.palette.IRIS;
-                    this._output_render_context.lineWidth = 1;
-            
-                    const leftCenter = keypoints[this.config.NUM_KEYPOINTS];
-                    const leftDiameterY = this.distance(
-                      keypoints[this.config.NUM_KEYPOINTS + 4],
-                      keypoints[this.config.NUM_KEYPOINTS + 2]);
-                    const leftDiameterX = this.distance(
-                      keypoints[this.config.NUM_KEYPOINTS + 3],
-                      keypoints[this.config.NUM_KEYPOINTS + 1]);
-            
-                    this._output_render_context.beginPath();
-                    this._output_render_context.ellipse((leftCenter[0] * coverRatio) + x, (leftCenter[1] - y) * coverRatio, leftDiameterX / 2, leftDiameterY / 2, 0, 0, 2 * Math.PI);
-                    this._output_render_context.stroke();
-            
-                    if(keypoints.length > this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS) {
-                      const rightCenter = keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS];
-                      const rightDiameterY = this.distance(
-                        keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 2],
-                        keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 4]);
-                      const rightDiameterX = this.distance(
-                        keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 3],
-                        keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 1]);
-            
-                      this._output_render_context.beginPath();
-                      this._output_render_context.ellipse((rightCenter[0] * coverRatio) + x, (rightCenter[1] - y) * coverRatio, rightDiameterX / 2, rightDiameterY / 2, 0, 0, 2 * Math.PI);
-                      this._output_render_context.stroke();
-                    }
-                }
-            });
+            this.keypoints = predictions[0].scaledMesh as unknown as number[][];
         }
 
+        if (this._is_scanning) {
+            this._interval_id = window.setTimeout(this._read.bind(this), 41);
+        } else {
+            clearTimeout(this._interval_id);
+        }
+    }
+
+    private async _render() {
+        //scale to cover
+        let original_ratios = {
+            width: this._output_render_context.canvas.width / this._video.videoWidth,
+            height: this._output_render_context.canvas.height / this._video.videoHeight
+        };
         
+        // formula for cover:
+        let cover_ratio = Math.max(original_ratios.width, original_ratios.height); 
         
+        // result:
+        let new_image_width = this._video.videoWidth * cover_ratio;
+        let new_image_height = this._video.videoHeight * cover_ratio;
+
+        // // get the top left position of the image
+        let x = (this._output_render_context.canvas.width / 2) - (this._video.videoWidth / 2) * cover_ratio;
+        let y = (this._output_render_context.canvas.height / 2) - (this._video.videoHeight / 2) * cover_ratio;
+
+        this._image_metadata = {
+            cover_ratio: cover_ratio,
+            top_left: {
+                x: x,
+                y: y
+            }
+        }
+
+        //draw to canvas
+        this._output_render_context.drawImage(this._video, x, y, new_image_width, new_image_height);
+        
+        this._output_render_context.strokeStyle = this.config.palette.FACE;
+        this._output_render_context.lineWidth = 0.5;
+        
+        if (this.keypoints.length > 1) {
+            //face
+            for (let i = 0; i < TRIANGULATION.length / 3; i++) {
+                const points = [
+                    TRIANGULATION[i * 3], TRIANGULATION[i * 3 + 1],
+                    TRIANGULATION[i * 3 + 2]
+                ].map(index => this.keypoints[index]);
+                this.drawPath(points, true);
+            }
+
+            //iris
+            if(this.keypoints.length > this.config.NUM_KEYPOINTS) {
+                this._output_render_context.strokeStyle = this.config.palette.IRIS;
+                this._output_render_context.lineWidth = 1;
+        
+                const leftCenter = this.keypoints[this.config.NUM_KEYPOINTS];
+                const leftDiameterY = this.distance(
+                    this.keypoints[this.config.NUM_KEYPOINTS + 4],
+                    this.keypoints[this.config.NUM_KEYPOINTS + 2]);
+                const leftDiameterX = this.distance(
+                    this.keypoints[this.config.NUM_KEYPOINTS + 3],
+                    this.keypoints[this.config.NUM_KEYPOINTS + 1]);
+        
+                this._output_render_context.beginPath();
+                this._output_render_context.ellipse(
+                    (leftCenter[0] * this._image_metadata.cover_ratio) + this._image_metadata.top_left.x,
+                    (leftCenter[1] - this._image_metadata.top_left.y) * this._image_metadata.cover_ratio,
+                    leftDiameterX / 2, leftDiameterY / 2, 0, 0, 2 * Math.PI
+                );
+                this._output_render_context.stroke();
+        
+                if(this.keypoints.length > this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS) {
+                    const rightCenter = this.keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS];
+                    const rightDiameterY = this.distance(
+                    this.keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 2],
+                    this.keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 4]);
+                    const rightDiameterX = this.distance(
+                    this.keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 3],
+                    this.keypoints[this.config.NUM_KEYPOINTS + this.config.NUM_IRIS_KEYPOINTS + 1]);
+        
+                    this._output_render_context.beginPath();
+                    this._output_render_context.ellipse(
+                        (rightCenter[0] * this._image_metadata.cover_ratio) + this._image_metadata.top_left.x,
+                        (rightCenter[1] - this._image_metadata.top_left.y) * this._image_metadata.cover_ratio, rightDiameterX / 2,
+                        rightDiameterY / 2, 0, 0, 2 * Math.PI
+                    );
+                    this._output_render_context.stroke();
+                }
+            }
+        }
+
 
         if (this._is_scanning) {
             this._anim_id = window.requestAnimationFrame(this._render.bind(this));
@@ -226,6 +268,7 @@ export class FaceDetector {
                         this._is_scanning = true;
 
                         this._render();
+                        
 
                         await tf.setBackend("webgl");
                         // Load the MediaPipe Facemesh package.
@@ -239,8 +282,8 @@ export class FaceDetector {
                                 // scoreThreshold: 1,
                             }
                         );
-
-                        
+                            
+                        this._read();
 
                         resolve();
     
@@ -299,5 +342,3 @@ export class FaceDetector {
         })
     }
 }
-
-export {};
