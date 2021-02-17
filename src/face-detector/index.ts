@@ -8,6 +8,7 @@ import * as tfjsWasm from '@tensorflow/tfjs-backend-wasm';
 
 import {TRIANGULATION} from './common/triangulation';
 import { Coord2D } from '@tensorflow-models/face-landmarks-detection/dist/mediapipe-facemesh/util';
+import {mobileCheck} from './common/utils';
 
 tfjsWasm.setWasmPaths(
     `https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@${tfjsWasm.version_wasm}/dist/`);
@@ -15,10 +16,12 @@ tfjsWasm.setWasmPaths(
 export interface ICallbacks {
     found?: Function;
     error?: Function;
+    ready?: Function;
 }
 enum Eevents {
     found,
-    error
+    error,
+    ready
 }
 export type events = keyof typeof Eevents;
 export interface IPalette {
@@ -31,6 +34,7 @@ export interface IConfig {
     palette                : IPalette;
     FACE_IN_VIEW_THRESHOLD : number;
     RENDER_FX              : boolean;
+    TENSORFLOW_BACKEND     : string;
 }
 export interface Config {
     NUM_KEYPOINTS?          : number;
@@ -38,6 +42,7 @@ export interface Config {
     palette?                : IPalette;
     FACE_IN_VIEW_THRESHOLD? : number;
     RENDER_FX?              : boolean;
+    TENSORFLOW_BACKEND?     : string;
 }
 export interface IMetaData {
     cover_ratio  : number;
@@ -113,12 +118,13 @@ export class FaceDetector {
             IRIS: '#FF2C35'
         },
         FACE_IN_VIEW_THRESHOLD: 0.8,
-        RENDER_FX: true
+        RENDER_FX: true,
+        TENSORFLOW_BACKEND: mobileCheck() ? "wasm" : "webgl"
     };
     constructor(context : CanvasRenderingContext2D, config? : Config) {
         this._output_render_context = context;
         this._video = document.createElement('video') as HTMLVideoElement;
-
+        console.log(mobileCheck())
         if (config) {
             this.set_config(config);
         }
@@ -405,7 +411,7 @@ export class FaceDetector {
                         
 
                         //set tensorflow compute backend
-                        await tf.setBackend("webgl");
+                        await tf.setBackend(this.config.TENSORFLOW_BACKEND);
                         // Load the MediaPipe Facemesh package.
                         this.model = await faceLandmarksDetection.load(
                             faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
@@ -419,7 +425,10 @@ export class FaceDetector {
                         );
                             
                         this._read();
-
+                        
+                        if (this._callbacks.ready) {
+                            this._callbacks.ready();
+                        }
                         resolve();
     
                     } else {
@@ -501,6 +510,10 @@ export class FaceDetector {
             case "error":
                 this._callbacks.error = callback;
                 break;
+            
+            case "ready":
+                this._callbacks.ready = callback;
+                break;
         }
     }
 
@@ -528,5 +541,27 @@ export class FaceDetector {
             ...this.config,
             ...config
         };
+    }
+
+    public async getHQSanpshot() : Promise<Blob> {
+        try {
+            const video_track : MediaStreamTrack = this._stream.getVideoTracks()[0]
+            const image_capture = new ImageCapture(video_track);
+            const image : Blob = await image_capture.takePhoto();
+            return image;
+        } catch(e) {
+            //image capture unavailable?
+            const clean_plate : HTMLCanvasElement = this.get_clean_plate();
+            
+            return new Promise((resolve, reject) => {
+                clean_plate.toBlob(function (blob : Blob | null) {
+                    if (blob) {
+                        resolve(blob);
+                    } else {
+                        reject(new Error('Could not construct blob.'));
+                    }
+                }, 'image/png', 1);
+            })
+        }
     }
 }

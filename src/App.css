@@ -64,3 +64,14 @@
   min-width: 50px;
   min-height: 50px;
 }
+#loading {
+  background-color: black;
+  color: white;
+  position: absolute;
+  width: 100vw;
+  height: 100vh;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
