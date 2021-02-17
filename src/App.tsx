@@ -47,7 +47,7 @@ class App extends React.Component {
             <p id="mspf"></p>
           </div>
           <div id="canvas-container">
-            <canvas id="canvas" width="540" height="720" />
+            <canvas id="canvas" width="360" height="480" />
           </div>
           <div>
             <img id="image" />

@@ -124,7 +124,6 @@ export class FaceDetector {
     constructor(context : CanvasRenderingContext2D, config? : Config) {
         this._output_render_context = context;
         this._video = document.createElement('video') as HTMLVideoElement;
-        console.log(mobileCheck())
         if (config) {
             this.set_config(config);
         }
