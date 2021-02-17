@@ -54,3 +54,13 @@
     height: 600px;
   }
 }
+
+#profile-info {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 15px;
+  background-color: rgba(0, 0, 0, 0.5);
+  min-width: 50px;
+  min-height: 50px;
+}

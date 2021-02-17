@@ -1,6 +1,6 @@
 import React from 'react';
 import './App.css';
-import {FaceDetector, IResult} from './facial-recognition/index';
+import {FaceDetector, IResult} from './face-detector/index';
 
 class App extends React.Component {
   private face_detector : FaceDetector | undefined;
@@ -15,9 +15,13 @@ class App extends React.Component {
       FACE_IN_VIEW_THRESHOLD: 0.9,
       RENDER_FX: true
     });
+    const fps : HTMLParagraphElement = document.getElementById('fps') as HTMLParagraphElement;
+    const mspf : HTMLParagraphElement = document.getElementById('mspf') as HTMLParagraphElement;
 
     this.face_detector.detect();
     this.face_detector.on('found', (result : IResult) => {
+      fps.textContent = `FPS: ${result.profile_info.fps}`;
+      mspf.textContent = `MSPF: ${result.profile_info.mspf}`;
       const width : number = result.position.bottomRight.x - result.position.bottomLeft.x;
       const height : number = result.position.bottomLeft.y - result.position.topLeft.y;
 
@@ -44,8 +48,13 @@ class App extends React.Component {
     return (
       <div className="App">
         <header className="App-header">
+          <div id="profile-info">
+            <h5>Stats</h5>
+            <p id="fps"></p>
+            <p id="mspf"></p>
+          </div>
           <div id="canvas-container">
-            <canvas id="canvas" width="480" height="852" />
+            <canvas id="canvas" width="540" height="720" />
           </div>
           <div>
             <img id="image" />
