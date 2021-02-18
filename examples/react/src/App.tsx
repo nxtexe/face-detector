@@ -1,6 +1,6 @@
 import React from 'react';
 import './App.css';
-import {FaceDetector, IResult} from './face-detector/index';
+import {FaceDetector, IResult} from 'tensorflow-face-detector';
 
 class App extends React.Component {
   private face_detector : FaceDetector | undefined;

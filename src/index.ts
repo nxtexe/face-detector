@@ -119,7 +119,7 @@ export class FaceDetector {
         },
         FACE_IN_VIEW_THRESHOLD: 0.8,
         RENDER_FX: true,
-        TENSORFLOW_BACKEND: mobileCheck() ? "wasm" : "webgl"
+        TENSORFLOW_BACKEND: !tf.ENV.getBool('WEBGL_RENDER_FLOAT32_CAPABLE') ? "wasm" : "webgl"
     };
     constructor(context : CanvasRenderingContext2D, config? : Config) {
         this._output_render_context = context;
@@ -407,10 +407,11 @@ export class FaceDetector {
                         this._is_scanning = true;
 
                         this._render();
-                        
 
+                        
                         //set tensorflow compute backend
                         await tf.setBackend(this.config.TENSORFLOW_BACKEND);
+                        tf.enableProdMode();
                         // Load the MediaPipe Facemesh package.
                         this.model = await faceLandmarksDetection.load(
                             faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
